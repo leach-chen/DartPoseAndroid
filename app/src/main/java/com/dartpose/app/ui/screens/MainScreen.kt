@@ -233,25 +233,27 @@ fun DetectionOverlay(
         }
         
         if (trajectory.size >= 2) {
-            val path = Path()
-            path.moveTo(trajectory[0].x * canvasWidth, trajectory[0].y * canvasHeight)
-            
-            for (i in 1 until trajectory.size) {
-                path.lineTo(trajectory[i].x * canvasWidth, trajectory[i].y * canvasHeight)
-            }
-            
-            drawPath(
-                path = path,
-                color = Color.Green,
-                style = Stroke(width = 6f)
-            )
-            
-            trajectory.forEach { point ->
-                drawCircle(
-                    color = Color.Green,
-                    radius = 5f,
-                    center = Offset(point.x * canvasWidth, point.y * canvasHeight)
-                )
+            val colors = listOf(Color.Green, Color(0xFFFF9800), Color(0xFFF44336))
+            trajectory.groupBy { it.colorIndex }.forEach { (colorIdx, pts) ->
+                if (pts.size >= 2) {
+                    val path = Path()
+                    path.moveTo(pts[0].x * canvasWidth, pts[0].y * canvasHeight)
+                    for (i in 1 until pts.size) {
+                        path.lineTo(pts[i].x * canvasWidth, pts[i].y * canvasHeight)
+                    }
+                    drawPath(
+                        path = path,
+                        color = colors.getOrElse(colorIdx) { Color.Green },
+                        style = Stroke(width = 6f)
+                    )
+                }
+                pts.forEach { point ->
+                    drawCircle(
+                        color = colors.getOrElse(colorIdx) { Color.Green },
+                        radius = 5f,
+                        center = Offset(point.x * canvasWidth, point.y * canvasHeight)
+                    )
+                }
             }
         }
     }

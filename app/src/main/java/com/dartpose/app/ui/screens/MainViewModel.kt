@@ -44,11 +44,34 @@ class MainViewModel @Inject constructor(
     
     private var lastHandPosition: TrajectoryPoint? = null
     private var lastTimestamp: Long = 0
+    private var lastValidTrackTime: Long = 0
+    private var lastPoseUpdateTime: Long = 0
+    private var currentColorIndex = 0
+    private var restCenterX = -1f
+    private var restCenterY = -1f
+    private var isThrowing = false
     
     init {
         viewModelScope.launch {
             mediaPipeProcessor.poseData.collect { poseData ->
-                _poseLandmarks.value = poseData?.landmarks ?: emptyList()
+                val landmarks = poseData?.landmarks
+                if (!landmarks.isNullOrEmpty()) {
+                    val prev = _poseLandmarks.value
+                    if (prev.isEmpty()) {
+                        _poseLandmarks.value = landmarks
+                    } else {
+                        _poseLandmarks.value = landmarks.mapIndexed { i, curr ->
+                            val p = prev.getOrNull(i) ?: return@mapIndexed curr
+                            PoseLandmark(
+                                x = p.x * 0.6f + curr.x * 0.4f,
+                                y = p.y * 0.6f + curr.y * 0.4f,
+                                z = p.z * 0.6f + curr.z * 0.4f,
+                                visibility = curr.visibility
+                            )
+                        }
+                    }
+                    lastPoseUpdateTime = System.currentTimeMillis()
+                }
             }
         }
         
@@ -60,16 +83,13 @@ class MainViewModel @Inject constructor(
                 }
                 _handLandmarks.value = allLandmarks
                 
-                // Track hand movement for trajectory
-                if (_isTracking.value && hands.isNotEmpty()) {
-                    val firstHand = hands.firstOrNull()
-                    val landmarks = firstHand?.landmarks
+                if (_isTracking.value) {
                     val currentTime = System.currentTimeMillis()
+                    val handLandmarks = hands.firstOrNull()?.landmarks ?: emptyList()
+                    val trackingPoint = findTrackingPoint(_poseLandmarks.value, handLandmarks)
                     
-                    if (landmarks != null && landmarks.isNotEmpty()) {
-                        // Use index finger tip (8) or wrist (0)
-                        val trackingPoint = landmarks.getOrNull(8) ?: landmarks.getOrNull(0) ?: return@collect
-                        
+                    if (trackingPoint != null) {
+                        lastValidTrackTime = currentTime
                         val newPoint = TrajectoryPoint(trackingPoint.x, trackingPoint.y, currentTime)
                         val currentTrajectory = _trajectory.value.toMutableList()
                         
@@ -79,25 +99,51 @@ class MainViewModel @Inject constructor(
                             val dy = newPoint.y - lastHandPosition!!.y
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
                             
-                            // Interpolate for fast movement
-                            if (distance > 0.015f && timeDiff in 1..100) {
-                                val steps = kotlin.math.min((distance / 0.008f).toInt(), 15)
+                            if (distance < 0.003f) {
+                                lastHandPosition = newPoint
+                                lastTimestamp = currentTime
+                                return@collect
+                            }
+                            
+                            if (distance > 0.015f && timeDiff > 0 && timeDiff <= 200) {
+                                val steps = kotlin.math.min((distance / 0.005f).toInt(), 30)
                                 for (i in 1 until steps) {
                                     val fraction = i.toFloat() / steps
                                     currentTrajectory.add(
                                         TrajectoryPoint(
                                             lastHandPosition!!.x + dx * fraction,
                                             lastHandPosition!!.y + dy * fraction,
-                                            lastTimestamp + (timeDiff * fraction).toLong()
+                                            lastTimestamp + (timeDiff * fraction).toLong(),
+                                            currentColorIndex
                                         )
                                     )
                                 }
                             }
                         }
                         
-                        currentTrajectory.add(newPoint)
+                        if (restCenterX < 0 && currentTrajectory.size >= 10) {
+                            val recent = currentTrajectory.takeLast(10)
+                            restCenterX = recent.map { it.x }.average().toFloat()
+                            restCenterY = recent.map { it.y }.average().toFloat()
+                        }
                         
-                        // Keep trajectory length manageable
+                        if (restCenterX >= 0) {
+                            val dx = trackingPoint.x - restCenterX
+                            val dy = trackingPoint.y - restCenterY
+                            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                            if (dist > 0.06f) isThrowing = true
+                            if (isThrowing && dist < 0.05f) {
+                                currentColorIndex = (currentColorIndex + 1) % 3
+                                isThrowing = false
+                                restCenterX = trackingPoint.x
+                                restCenterY = trackingPoint.y
+                            }
+                        }
+                        
+                        currentTrajectory.add(TrajectoryPoint(
+                            trackingPoint.x, trackingPoint.y, currentTime, currentColorIndex
+                        ))
+                        
                         if (currentTrajectory.size > 800) {
                             currentTrajectory.removeAt(0)
                         }
@@ -106,6 +152,26 @@ class MainViewModel @Inject constructor(
                         lastHandPosition = newPoint
                         lastTimestamp = currentTime
                     }
+                }
+            }
+        }
+        
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(250)
+                val now = System.currentTimeMillis()
+                if (_poseLandmarks.value.isNotEmpty() && now - lastPoseUpdateTime > 500) {
+                    _poseLandmarks.value = emptyList()
+                }
+                if (_trajectory.value.isNotEmpty() && lastValidTrackTime > 0 && now - lastValidTrackTime > 2000) {
+                    _trajectory.value = emptyList()
+                    lastHandPosition = null
+                    lastTimestamp = 0
+                    lastValidTrackTime = 0
+                    currentColorIndex = 0
+                    restCenterX = -1f
+                    restCenterY = -1f
+                    isThrowing = false
                 }
             }
         }
@@ -120,6 +186,10 @@ class MainViewModel @Inject constructor(
         _trajectory.value = emptyList()
         lastHandPosition = null
         lastTimestamp = 0
+        currentColorIndex = 0
+        restCenterX = -1f
+        restCenterY = -1f
+        isThrowing = false
     }
     
     fun toggleTracking() {
@@ -130,6 +200,40 @@ class MainViewModel @Inject constructor(
         }
     }
     
+    private fun findTrackingPoint(
+        poseLandmarks: List<PoseLandmark>,
+        handLandmarks: List<HandLandmark>
+    ): HandLandmark? {
+        if (handLandmarks.isEmpty()) return null
+
+        val palmCenter = calculatePalmCenter(handLandmarks)
+        if (palmCenter != null) return palmCenter
+
+        handLandmarks.getOrNull(0)?.let { return it }
+
+        val bestPoseWrist = listOfNotNull(
+            poseLandmarks.getOrNull(15)?.takeIf { it.visibility > 0.5f },
+            poseLandmarks.getOrNull(16)?.takeIf { it.visibility > 0.5f }
+        ).maxByOrNull { it.visibility }
+
+        if (bestPoseWrist != null) {
+            return HandLandmark(bestPoseWrist.x, bestPoseWrist.y, bestPoseWrist.z)
+        }
+
+        return handLandmarks.getOrNull(8)
+    }
+
+    private fun calculatePalmCenter(landmarks: List<HandLandmark>): HandLandmark? {
+        val palmIndices = listOf(0, 5, 9, 13, 17)
+        val valid = palmIndices.mapNotNull { landmarks.getOrNull(it) }
+        if (valid.size < 3) return null
+        return HandLandmark(
+            x = valid.sumOf { it.x.toDouble() }.toFloat() / valid.size,
+            y = valid.sumOf { it.y.toDouble() }.toFloat() / valid.size,
+            z = valid.sumOf { it.z.toDouble() }.toFloat() / valid.size
+        )
+    }
+
     override fun onCleared() {
         super.onCleared()
         mediaPipeProcessor.close()

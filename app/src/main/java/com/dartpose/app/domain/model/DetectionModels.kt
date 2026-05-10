@@ -26,5 +26,6 @@ data class HandData(
 data class TrajectoryPoint(
     val x: Float,
     val y: Float,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val colorIndex: Int = 0
 )

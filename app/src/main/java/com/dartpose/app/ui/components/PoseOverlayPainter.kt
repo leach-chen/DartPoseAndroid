@@ -155,24 +155,36 @@ class PoseOverlayPainter(
         
         if (trajectory.size < 2) return bitmap
 
-        // Draw trajectory line
-        val path = android.graphics.Path()
-        path.moveTo(trajectory[0].x * imageWidth, trajectory[0].y * imageHeight)
-        
-        for (i in 1 until trajectory.size) {
-            path.lineTo(trajectory[i].x * imageWidth, trajectory[i].y * imageHeight)
-        }
-        
-        canvas.drawPath(path, trajectoryPaint)
+        val colors = listOf(
+            android.graphics.Color.GREEN,
+            android.graphics.Color.rgb(255, 152, 0),
+            android.graphics.Color.rgb(244, 67, 54)
+        )
 
-        // Draw trajectory points
-        for (point in trajectory) {
-            canvas.drawCircle(
-                point.x * imageWidth,
-                point.y * imageHeight,
-                5f,
-                trajectoryPointPaint
-            )
+        trajectory.groupBy { it.colorIndex }.forEach { (colorIdx, pts) ->
+            if (pts.size >= 2) {
+                val paint = Paint().apply {
+                    color = colors.getOrElse(colorIdx) { android.graphics.Color.GREEN }
+                    style = Paint.Style.STROKE
+                    strokeWidth = 6f
+                    strokeCap = Paint.Cap.ROUND
+                    isAntiAlias = true
+                }
+                val pointPaint = Paint().apply {
+                    color = colors.getOrElse(colorIdx) { android.graphics.Color.GREEN }
+                    style = Paint.Style.FILL
+                    isAntiAlias = true
+                }
+                val path = android.graphics.Path()
+                path.moveTo(pts[0].x * imageWidth, pts[0].y * imageHeight)
+                for (i in 1 until pts.size) {
+                    path.lineTo(pts[i].x * imageWidth, pts[i].y * imageHeight)
+                }
+                canvas.drawPath(path, paint)
+                for (point in pts) {
+                    canvas.drawCircle(point.x * imageWidth, point.y * imageHeight, 5f, pointPaint)
+                }
+            }
         }
 
         return bitmap
