@@ -166,16 +166,6 @@ class MainViewModel @Inject constructor(
                     (now - lastPoseUpdateTime > 500 || (lastHandSeenTime > 0 && now - lastHandSeenTime > 500))) {
                     _poseLandmarks.value = emptyList()
                 }
-                if (_trajectory.value.isNotEmpty() && lastValidTrackTime > 0 && now - lastValidTrackTime > 2000) {
-                    _trajectory.value = emptyList()
-                    lastHandPosition = null
-                    lastTimestamp = 0
-                    lastValidTrackTime = 0
-                    currentColorIndex = 0
-                    restCenterX = -1f
-                    restCenterY = -1f
-                    isThrowing = false
-                }
             }
         }
     }
