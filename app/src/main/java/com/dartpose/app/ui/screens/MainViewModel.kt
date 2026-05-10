@@ -46,6 +46,7 @@ class MainViewModel @Inject constructor(
     private var lastTimestamp: Long = 0
     private var lastValidTrackTime: Long = 0
     private var lastPoseUpdateTime: Long = 0
+    private var lastHandSeenTime: Long = 0
     private var currentColorIndex = 0
     private var restCenterX = -1f
     private var restCenterY = -1f
@@ -82,6 +83,7 @@ class MainViewModel @Inject constructor(
                     allLandmarks.addAll(hand.landmarks)
                 }
                 _handLandmarks.value = allLandmarks
+                if (hands.isNotEmpty()) lastHandSeenTime = System.currentTimeMillis()
                 
                 if (_isTracking.value) {
                     val currentTime = System.currentTimeMillis()
@@ -105,8 +107,8 @@ class MainViewModel @Inject constructor(
                                 return@collect
                             }
                             
-                            if (distance > 0.015f && timeDiff > 0 && timeDiff <= 200) {
-                                val steps = kotlin.math.min((distance / 0.005f).toInt(), 30)
+                            if (distance > 0.008f && timeDiff > 0 && timeDiff <= 500) {
+                                val steps = (distance / 0.003f).toInt().coerceIn(1, 80)
                                 for (i in 1 until steps) {
                                     val fraction = i.toFloat() / steps
                                     currentTrajectory.add(
@@ -160,7 +162,8 @@ class MainViewModel @Inject constructor(
             while (true) {
                 kotlinx.coroutines.delay(250)
                 val now = System.currentTimeMillis()
-                if (_poseLandmarks.value.isNotEmpty() && now - lastPoseUpdateTime > 500) {
+                if (_poseLandmarks.value.isNotEmpty() && 
+                    (now - lastPoseUpdateTime > 500 || (lastHandSeenTime > 0 && now - lastHandSeenTime > 500))) {
                     _poseLandmarks.value = emptyList()
                 }
                 if (_trajectory.value.isNotEmpty() && lastValidTrackTime > 0 && now - lastValidTrackTime > 2000) {
@@ -204,7 +207,18 @@ class MainViewModel @Inject constructor(
         poseLandmarks: List<PoseLandmark>,
         handLandmarks: List<HandLandmark>
     ): HandLandmark? {
-        if (handLandmarks.isEmpty()) return null
+        if (handLandmarks.isEmpty()) {
+            if (lastHandSeenTime > 0 && System.currentTimeMillis() - lastHandSeenTime < 500) {
+                val bestPoseWrist = listOfNotNull(
+                    poseLandmarks.getOrNull(15)?.takeIf { it.visibility > 0.5f },
+                    poseLandmarks.getOrNull(16)?.takeIf { it.visibility > 0.5f }
+                ).maxByOrNull { it.visibility }
+                if (bestPoseWrist != null) {
+                    return HandLandmark(bestPoseWrist.x, bestPoseWrist.y, bestPoseWrist.z)
+                }
+            }
+            return null
+        }
 
         val palmCenter = calculatePalmCenter(handLandmarks)
         if (palmCenter != null) return palmCenter
